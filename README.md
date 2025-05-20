@@ -1,1 +1,1 @@
-# Medium-AI-Parasite-SEO
+# HR Policy Resolver
