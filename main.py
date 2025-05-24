@@ -1,144 +1,193 @@
-import tkinter as tk
-from tkinter import messagebox, scrolledtext
+import streamlit as st
 import speech_recognition as sr
 import os
-import threading
 import logging
 from lang_utils import detect_language, get_language_name, text_to_speech
-import pygame  # For playing audio files
+import tempfile
+import time
+from deep_translator import GoogleTranslator
+# from googletrans import Translator, LANGUAGES
+import httpx
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Initialize pygame for audio playback
-pygame.mixer.init()
+# Set page configuration
+st.set_page_config(
+    page_title="Voice-Text Converter",
+    page_icon="🎙️",
+    layout="wide"
+)
 
-class VoiceTextConverterApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Voice-Text Converter (Indian Languages)")
-        self.root.geometry("600x400")
-        self.root.configure(bg="#f0f0f0")
+# Initialize translator
+translator = GoogleTranslator()
 
-        # Recognizer for speech-to-text
-        self.recognizer = sr.Recognizer()
+# List of supported languages for gTTS and Google Translate
+# Format: { "Language Name": "language_code" }
+SUPPORTED_LANGUAGES = {
+    "English": "en",
+    "Hindi": "hi",
+    "Bengali": "bn",
+    "Tamil": "ta",
+    "Telugu": "te",
+    "Marathi": "mr",
+    "Gujarati": "gu",
+    "Kannada": "kn",
+    "Malayalam": "ml",
+    "Punjabi": "pa",
+}
 
-        # GUI Elements
-        self.create_widgets()
+def main():
+    st.title("Voice-Text Converter (Indian Languages)")
+    st.write("Convert speech to text, translate to a selected language, and convert to speech")
 
-    def create_widgets(self):
-        """Create the GUI elements."""
-        # Title Label
-        title_label = tk.Label(self.root, text="Voice-Text Converter", font=("Arial", 16, "bold"), bg="#f0f0f0")
-        title_label.pack(pady=10)
+    # Initialize session state
+    if 'text' not in st.session_state:
+        st.session_state.text = ""
+    if 'translated_text' not in st.session_state:
+        st.session_state.translated_text = ""
+    if 'detected_language' not in st.session_state:
+        st.session_state.detected_language = "None"
 
-        # Text Area for displaying converted text
-        self.text_area = scrolledtext.ScrolledText(self.root, width=50, height=10, font=("Arial", 12))
-        self.text_area.pack(pady=10)
+    # Create two columns for layout
+    col1, col2 = st.columns([2, 1])
 
-        # Language Label to display detected language
-        self.language_label = tk.Label(self.root, text="Detected Language: None", font=("Arial", 10), bg="#f0f0f0")
-        self.language_label.pack(pady=5)
+    with col1:
+        # Original text area
+        st.subheader("Original Text")
+        text_area = st.text_area(
+            "Text will appear here...",
+            value=st.session_state.text,
+            height=200,
+            key="text_area"
+        )
+        st.session_state.text = text_area
 
-        # Buttons Frame
-        button_frame = tk.Frame(self.root, bg="#f0f0f0")
-        button_frame.pack(pady=10)
+        # Translated text area
+        st.subheader("Translated Text")
+        translated_text_area = st.text_area(
+            "Translated text will appear here...",
+            value=st.session_state.translated_text,
+            height=200,
+            key="translated_text_area",
+            disabled=True  # Make it read-only
+        )
 
-        # Voice to Text Button
-        self.voice_to_text_btn = tk.Button(button_frame, text="Voice to Text", font=("Arial", 12), command=self.start_voice_to_text, bg="#4CAF50", fg="white")
-        self.voice_to_text_btn.grid(row=0, column=0, padx=10)
+        # Language display
+        st.write(f"Detected Language: {st.session_state.detected_language}")
 
-        # Text to Voice Button
-        self.text_to_voice_btn = tk.Button(button_frame, text="Text to Voice", font=("Arial", 12), command=self.start_text_to_voice, bg="#2196F3", fg="white")
-        self.text_to_voice_btn.grid(row=0, column=1, padx=10)
+    with col2:
+        # Controls
+        st.subheader("Controls")
+        
+        # Voice to Text button
+        if st.button("🎙️ Voice to Text", use_container_width=True):
+            with st.spinner("Listening..."):
+                voice_to_text()
 
-        # Clear Button
-        self.clear_btn = tk.Button(button_frame, text="Clear", font=("Arial", 12), command=self.clear_text, bg="#f44336", fg="white")
-        self.clear_btn.grid(row=0, column=2, padx=10)
+        # Language selection for Translation and Text to Voice
+        st.subheader("Translation & Text to Voice Settings")
+        selected_language = st.selectbox(
+            "Select Target Language",
+            options=list(SUPPORTED_LANGUAGES.keys()),
+            index=0  # Default to English
+        )
 
-    def start_voice_to_text(self):
-        """Start the voice-to-text conversion in a separate thread."""
-        self.text_area.delete(1.0, tk.END)
-        self.language_label.config(text="Detected Language: Listening...")
-        threading.Thread(target=self.voice_to_text, daemon=True).start()
-
-    def voice_to_text(self):
-        """Convert voice to text and detect language."""
-        try:
-            with sr.Microphone() as source:
-                self.recognizer.adjust_for_ambient_noise(source, duration=1)
-                audio = self.recognizer.listen(source, timeout=5)
-
-            # Use Google Speech Recognition
-            text = self.recognizer.recognize_google(audio)
-            if text:
-                # Detect language
-                lang_code = detect_language(text)
-                lang_name = get_language_name(lang_code)
-
-                # Update GUI
-                self.text_area.insert(tk.END, text)
-                self.language_label.config(text=f"Detected Language: {lang_name}")
+        # Translate button
+        if st.button("🌐 Translate", use_container_width=True):
+            if st.session_state.text.strip():
+                with st.spinner("Translating..."):
+                    translate_text(st.session_state.text, selected_language)
             else:
-                messagebox.showerror("Error", "Could not understand the audio.")
-        except sr.WaitTimeoutError:
-            messagebox.showerror("Error", "Listening timed out. Please try again.")
-        except sr.UnknownValueError:
-            messagebox.showerror("Error", "Could not understand the audio.")
-        except sr.RequestError as e:
-            messagebox.showerror("Error", f"Could not request results; {e}")
-        except Exception as e:
-            messagebox.showerror("Error", f"An error occurred: {e}")
+                st.warning("Please enter text or convert voice to text first.")
 
-    def start_text_to_voice(self):
-        """Start the text-to-voice conversion in a separate thread."""
-        text = self.text_area.get(1.0, tk.END).strip()
-        if not text:
-            messagebox.showwarning("Warning", "Please enter text or convert voice to text first.")
-            return
+        # Text to Voice button
+        if st.button("🔊 Text to Voice", use_container_width=True):
+            if st.session_state.translated_text.strip():
+                with st.spinner("Processing..."):
+                    text_to_voice(st.session_state.translated_text, selected_language)
+            else:
+                st.warning("Please translate the text first.")
 
-        self.language_label.config(text="Detected Language: Processing...")
-        threading.Thread(target=self.text_to_voice, args=(text,), daemon=True).start()
+        # Clear button
+        if st.button("🗑️ Clear", use_container_width=True):
+            st.session_state.text = ""
+            st.session_state.translated_text = ""
+            st.session_state.detected_language = "None"
+            st.rerun()
 
-    def text_to_voice(self, text):
-        """Convert text to voice and play the audio."""
-        try:
+def voice_to_text():
+    """Convert voice to text and detect language."""
+    try:
+        recognizer = sr.Recognizer()
+        with sr.Microphone() as source:
+            recognizer.adjust_for_ambient_noise(source, duration=1)
+            audio = recognizer.listen(source, timeout=5)
+
+        # Use Google Speech Recognition
+        text = recognizer.recognize_google(audio)
+        if text:
             # Detect language
             lang_code = detect_language(text)
             lang_name = get_language_name(lang_code)
 
-            # Update GUI
-            self.language_label.config(text=f"Detected Language: {lang_name}")
+            # Update session state
+            st.session_state.text = text
+            st.session_state.detected_language = lang_name
+            st.session_state.translated_text = ""  # Clear translated text
+            st.success("Speech converted successfully!")
+            st.rerun()
+        else:
+            st.error("Could not understand the audio.")
+    except sr.WaitTimeoutError:
+        st.error("Listening timed out. Please try again.")
+    except sr.UnknownValueError:
+        st.error("Could not understand the audio.")
+    except sr.RequestError as e:
+        st.error(f"Could not request results; {e}")
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
 
-            # Convert text to speech
-            output_file = "output.mp3"
-            success, method = text_to_speech(text, lang_code, output_file)
+from deep_translator import GoogleTranslator
 
-            if success:
-                if method == 'gtts':
-                    # Play the audio file
-                    if os.path.exists(output_file):
-                        pygame.mixer.music.load(output_file)
-                        pygame.mixer.music.play()
-                        while pygame.mixer.music.get_busy():
-                            pygame.time.Clock().tick(10)
-                        logging.info("Audio playback completed.")
-                    else:
-                        messagebox.showerror("Error", "Audio file was not generated.")
-                elif method == 'pyttsx3':
-                    messagebox.showinfo("Info", "Text-to-speech completed using offline engine (pyttsx3).")
-            else:
-                messagebox.showerror("Error", "Failed to convert text to speech using both gTTS and pyttsx3.")
-        except Exception as e:
-            logging.error(f"Error in text-to-voice process: {e}")
-            messagebox.showerror("Error", f"An error occurred: {e}")
 
-    def clear_text(self):
-        """Clear the text area and reset language label."""
-        self.text_area.delete(1.0, tk.END)
-        self.language_label.config(text="Detected Language: None")
+def translate_text(text, selected_language):
+    try:
+        # Convert "Hindi" -> "hi"
+        lang_code = SUPPORTED_LANGUAGES.get(selected_language, "en")
+
+        # Use lang_code with GoogleTranslator
+        translated = GoogleTranslator(source='auto', target=lang_code).translate(text)
+
+        st.session_state.translated_text = translated
+        st.success(f"Text translated to {selected_language} successfully!")
+        st.rerun()
+    except Exception as e:
+        st.error(f"An error occurred during translation: {e}")
+
+def text_to_voice(text, selected_language):
+    try:
+        # Get the language code for selected language
+        lang_code = SUPPORTED_LANGUAGES.get(selected_language, "en")
+
+        # Create temp file
+        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
+            output_file = temp_file.name
+
+        # Convert text to speech
+        result = text_to_speech(text, lang_code, output_file)
+
+        # Check result and play
+        if isinstance(result, tuple) and result[0]:
+            with open(output_file, 'rb') as audio_file:
+                st.audio(audio_file.read(), format='audio/mp3')
+            st.success(f"Spoken in {selected_language} ({lang_code})")
+            os.unlink(output_file)
+        else:
+            st.error(f"TTS failed for language: {selected_language} ({lang_code})")
+    except Exception as e:
+        st.error(f"Error in TTS: {e}")
+    print(f"Selected: {selected_language}, Lang Code: {lang_code}, Text: {text}")
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = VoiceTextConverterApp(root)
-    root.mainloop()
+    main()

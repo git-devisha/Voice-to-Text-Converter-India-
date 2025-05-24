@@ -8,14 +8,10 @@ INDIAN_LANGUAGES = {
     'te': 'Telugu',
     'mr': 'Marathi',
     'ta': 'Tamil',
-    'ur': 'Urdu',
     'gu': 'Gujarati',
     'ml': 'Malayalam',
     'kn': 'Kannada',
-    'or': 'Odia',
-    'pa': 'Punjabi',
-    'as': 'Assamese',
-    'si': 'Sinhala',
+    'pa': 'Punjabi (Gurmukhi)',
     'en': 'English'  # Fallback for non-Indian languages
 }
 
@@ -31,12 +27,14 @@ def get_language_name(lang_code):
     """Get the full name of the language from its code."""
     return INDIAN_LANGUAGES.get(lang_code, 'Unknown')
 
-def text_to_speech(text, lang_code, output_file='output.mp3'):
-    """Convert text to speech and save as an audio file."""
+from gtts import gTTS
+
+def text_to_speech(text, lang_code, output_file):
     try:
         tts = gTTS(text=text, lang=lang_code, slow=False)
         tts.save(output_file)
-        return True
+        return True, 'gtts'
     except Exception as e:
-        print(f"Error in text-to-speech conversion: {e}")
-        return False
+        print(f"Error in text_to_speech: {e}")
+        return False, None
+
